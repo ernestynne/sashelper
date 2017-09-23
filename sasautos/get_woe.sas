@@ -3,9 +3,9 @@ DESCRIPTION: Calculates the weights of evidence for a variable with a binary or 
 
 INPUT: 
 ds_in            = input table
-target           = name of the target variable
+target           = name of the target variable a numeric variable with values {0 | 1}
 target_type      = whether the target is binary or interval {BIN | INT}
-var_in           = 
+var_in           = the variable that we wish to convert into an woe
 local_debug_flag = flag for debugging when set to true all _temp_ datasets are retained
 
 OUTPUT:
@@ -19,11 +19,11 @@ AUTHOR:
 E Walsh
 
 HISTORY: 
-03 Aug 2017 macro-ised
-01 Aug 2016 rewrote to handle numeric variables as well
-15 Jul 2016 v1
+03 Aug 2017 EW macro-ised
+01 Aug 2016 EW rewrote to handle numeric variables as well
+15 Jul 2016 EW v1
 *********************************************************************************************************/
-%macro get_woe (ds_in =, ds_out =, target = , target_type = , var_in =, local_debug_flag = False);
+%macro get_woe (ds_in =, ds_out =, target = , target_type = , var_in =, smooth = 30, local_debug_flag = False);
 	%put ********************************************************************;
 	%put --------------------------------------------------------------------;
 	%put ---------------------------sashelper--------------------------------;
@@ -34,11 +34,13 @@ HISTORY:
 	%put ................ds_out: &ds_out;
 	%put ................target: &target;
 	%put ...........target_type: &target_type;
+	%put ................var_in: &var_in;
+	%put ................smooth: &smooth;
 	%put ......local_debug_flag: &local_debug_flag;
 	%put --------------------------------------------------------------------;
 	%put ********************************************************************;
 
-	%if &target_type ~= BIN or  &target_type ~= BIN %then
+	%if not (&target_type = BIN or  &target_type = INT) %then
 		%do;
 			%put ERROR: In get_woe - target_measure must be one of BIN or INT;
 		%end;
@@ -46,61 +48,45 @@ HISTORY:
 		%do;
 			%if &target_type = BIN %then
 				%do;
-
-					proc sort data =  &ds_in.;
-						by &var_in.;
-					run;
-
 					/* for a binary target */
 					/* woe = log ( n_1i + n_1 x smooth)/(n_0i + n_0 x smooth) */
 					/* n_1i is a count of the target being equal to 1 for level i */
 					/* n_0i is a count of the target being equal to zero for level i */
-					/* n_1 is the total count of the target being equal to 1 */
-					/* n_0 is the total count of the target being equal to 0 */
+					/* n_0i + n_1i = n_i total count for level i */
+					/* p_1 is the proportion of the target variable with 1 */
+					/* 1-p_1 = p_0 is the proportion of the target variable with 0 */
 					proc sql noprint;
-						select count(*) into: n_1
+						/* warning if non standard target numbers are used i.e. anything other than 1 and 0
+																					then this will not work */
+						select mean(&target.) into: p_1
 							from &ds_in.
-								where &target.=1;
+								quit;
+
+					proc means data = &ds_in.;
+						class &var_in.;
+						var  &target.;
+						output out = work._temp_calculation (rename=(_freq_ = n_i)
+							where = ( _type_ = 1))
+							sum = n_1i;
+					run;
+
+					proc sql;
+						create table _temp_woe as
+							select a.*
+								/* since this is a binary outcome the number of zeroes for each level 
+								is the total number of each level less the number of 1s for that level */
+
+						,log((a.n_1i + &p_1. * &smooth.)/((a.n_i - a.n_1i) + (1-&p_1.) * &smooth.)) as &var_in._woe
+						from work._temp_calculation a;
 					quit;
 
-					proc sql noprint;
-						select count(*) into: n_0
-							from &ds_in.
-								where &target.=0;
+					proc sql;
+						create table &ds_out. as
+							select a.*
+								,b.&var_in._woe
+							from &ds_in a left join _temp_woe b
+								on a.&var_in. = b.&var_in.;
 					quit;
-
-					/* TODO - fix this part up so that it just uses  proc means */
-					/* create a join to get woe attached to the original table */
-
-					proc sort data=&ds out=work.temp_sorted;
-						by &var &target.;
-					run;
-
-					/* count the number of 1s and 0s in each level*/
-					data work._temp_calculation;
-						set &ds_in.;
-						by &var_in. &target.;
-						retain n_0i n_1i 0;
-
-						if &target. = 1 then
-							n_1i + 1;
-
-						/* used if rather than else in case there are missing values */
-						if &target. = 0 then
-							n_0i + 1;
-
-						if last.&var then
-							do;
-								output;
-								n_0i = 0;
-								n_1i = 1;
-							end;
-					run;
-
-					data &ds_out.;
-						set work._temp_calculation;
-						woe = log((n_1i + &n_1. * &smooth.)/(n_0i + &n_0. * &smooth.));
-					run;
 
 				%end;
 
@@ -114,18 +100,31 @@ HISTORY:
 					quit;
 
 					proc sql;
-						create table _temp_n_i_y_i as
+						create table work._temp_calculation as
 							select &var_in.
-								mean(&target.) as y_i
-								count(&var_in.) as n_i
+								,mean(&target.) as y_i
+								,count(&var_in.) as n_i
 							from &ds_in.
 								group by &var_in.;
 					quit;
 
-					data &ds_out.;
-						set _temp_n_i_y_i (where=());
-						woe = (&smooth. * &y_overall. + n_i * y_i) / (&smooth. + n_i);
-					run;
+					proc sql;
+						create table _temp_woe as
+							select a.*
+								/* since this is a binary outcome the number of zeroes for each level 
+								is the total number of each level less the number of 1s for that level */
+
+						,(&smooth. * &y_overall. + n_i * y_i) / (&smooth. + n_i) as &var_in._woe
+						from work._temp_calculation a;
+					quit;
+
+					proc sql;
+						create table &ds_out. as
+							select a.*
+								,b.&var_in._woe
+							from &ds_in a left join _temp_woe b
+								on a.&var_in. = b.&var_in.;
+					quit;
 
 				%end;
 
@@ -140,9 +139,3 @@ HISTORY:
 				%end;
 		%end;
 %mend;
-
-data work.bmt;
-	set sashelp.bmt;
-run;
-
-%get_woe (ds_in = work.bmt, ds_out =work.bmt_woe, target = status, target_type = BIN, var_in = group, local_debug_flag = False)

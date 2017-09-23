@@ -9,6 +9,7 @@ in_ds    = dataset containing variables
 uid      = unique id variable
 cat_vars = macro variable containing a list of categorical variables to check
 num_vars = macro variable containing a list of continuous variables to check
+local_debug_flag = flag for debuggin when set to true all _temp_ datasets are retained
 
 OUTPUT:
 work.&ds_in._collin         = condition index table
@@ -57,11 +58,38 @@ HISTORY:
 	/* first create a design matrix for the categorical variables */
 	%if &is_cat_vars_empty ~= 1 %then
 		%do;
+			/* if the list is not empty tidy it up in preparation for subsetting the datasets down stream */
+			%if is_ref_levels_empty ~= 1 %then
+				%do;
+					/* apply quotes so that it will not be mistaken as multiple arguments in subsequent functions */
+					%let quoted_ref_levels = %sysfunc(quote(%bquote(&ref_levels)));
+
+					/* compress blank spaces between the variables and quotes around the names */
+					/* this will allow it to be used in the where clause below */
+					data _null_;
+						/* first remove any quotes and commas so that there is no doubling up */
+						clean_ref_levels = compress(&quoted_ref_levels, ''',"','P');
+
+						/* then ensure we have a quoted list to pass all the reference levels */
+						/* even variables that have num datatype should have their argument passed in quotes */
+						quote_ref_list = cats("'", tranwrd(cats(compbl(clean_ref_levels)), " ", "' '"),"'");
+						call symput('quote_ref_list',left(trim(quote_ref_list)));
+					run;
+
+					/* double check */
+					%put NOTE: In get_collinearity - the original exclusion list is: &ref_levels;
+					%put NOTE: In get_collinearity - the quoted comma separated list is: &quote_ref_list;
+				%end;
 
 			proc transreg data= &ds_in. design;
-				model class(&cat_vars. / effect zero = "EUR") ;
-					output out=work._temp_design_matrix (drop= &cat_vars. _type_ _name_ );
-					id &uid;
+				model class(&cat_vars. / %if is_ref_levels_empty ~= 1 %then
+
+					%do;
+						effect zero = &quote_ref_list.
+					%end;
+				);
+				output out=work._temp_design_matrix (drop= &cat_vars. _type_ _name_ );
+				id &uid;
 			run;
 
 		%end;
