@@ -1,14 +1,16 @@
 /*********************************************************************************************************
 DESCRIPTION: Generate table of metadata regarding type of variables we have i.e. interval, categorical, 
-binary, unary. Also generates macro variables listing all the categorical and numeric variables less
+binary, unary based on the number of levels and whether or not the data type is char or numeric
+Also generates macro variables listing all the categorical and numeric variables less
 the ones in the exclusion list
 
 INPUT: 
 ds_in          = input table
 exc_vars       = list of quoted, comma separated variables to exclude from cat_vars and int_vars
-                 examples include the id variable and the target variable
+examples include the id variable and the target variable
 cutoff_level   = number of levels to define a categorical variable i.e. [3, &cutoff_level)
-                 if cutoff_level is exceeded the variable is considered interval (ie numeric)
+if cutoff_level is exceeded the variable is considered interval (ie numeric)
+local_debug_flag = flag for debuggin when set to true all _temp_ datasets are retained
 
 OUTPUT:
 ds_out         = output table specifying all the variable type metadata
@@ -56,7 +58,19 @@ HISTORY:
 
 	/* double check that the exclusion list */
 	/* first check if the exclusion list is empty */
-	%local is_exc_empty quoted_exc_vars;
+	%local is_exc_empty quoted_exc_vars lib_part ds_part;
+
+	/* first check if the input dataset name is libname.dataset or just dataset and assign them to variables */
+	%if %scan(&ds_in., 2, .)= %then
+		%do ;
+		%let lib_part = WORK;
+		%let ds_part = %sysfunc(upcase(%scan(&ds_in.,1,.)));
+		%end;
+	%else
+		%do;
+			%let lib_part = %sysfunc(upcase(%scan(&ds_in., 1 ,.)));
+			%let ds_part = %sysfunc(upcase(%scan(&ds_in.,2,.)));
+		%end;
 
 	/* this returns 1 if the exc_vars is empty and zero if it is not */
 	%let is_exc_empty =  %sysevalf(%superq(exc_vars)=,boolean);
@@ -71,7 +85,7 @@ HISTORY:
 			/* this will allow it to be used in the where clause below */
 			data _null_;
 				/* first remove any quotes and commas so that there is no doubling up */
-				clean_exc_vars = compress(&quoted_exc_vars, ',"','P');
+				clean_exc_vars = compress(&quoted_exc_vars, ''',"','P');
 
 				/* then ensure we have a comma separated list for where clauses */
 				quote_separated_list = cats("'", tranwrd(cats(compbl(clean_exc_vars)), " ", "','"),"'");
@@ -90,23 +104,42 @@ HISTORY:
 		table _all_ / noprint;
 	run;
 
+	/* double check the variable type - char have to be categorised as categorical even if they have heaps of levels*/
+	proc sql;
+		create table work._temp_data_type as
+			select name as var_name, type as data_type
+				from dictionary.columns
+					where libname = "&lib_part" and memname = "&ds_part";
+	quit;
+
+
+	proc sql;
+		create table work._temp_nlevels_var_type as
+			select a.*
+				,b.data_type
+			from work._temp_nlevels a 
+				left join work._temp_data_type b 
+					on upcase(a.tablevar) = upcase(b.var_name);
+	quit;
+
 	proc sql;
 		create table &ds_out.
 			as select * 
 				,
 			case 
-				when NNonMissLevels > &cutoff_level. then "INTERVAL"
+				when NNonMissLevels > &cutoff_level. and data_type = "num" then "INTERVAL"
+				when NNonMissLevels > &cutoff_level. and data_type = "char" then "CATEGORICAL"
 				when NNonMissLevels between 3 and &cutoff_level. then "CATEGORICAL"
 				when NNonMissLevels = 2 then "BINARY"
 				when NNonMissLevels = 1 then "UNARY"
 			end 
 		as var_type length = 11 format = $11.
-			from work._temp_nlevels;
+			from work._temp_nlevels_var_type;
 	quit;
 
 	/* store the categorical and numeric variables into separate macro variables so that they can
-		be referenced in the modelling later on things such as ids and target variables should be excluded
-		from this list using the exc var*/
+	be referenced in the modelling later on things such as ids and target variables should be excluded
+	from this list using the exc var*/
 	proc sql noprint;
 		select trim(tablevar) into: &cat_list_name separated  by ' '
 			from &ds_out.
@@ -126,10 +159,12 @@ HISTORY:
 	quit;
 
 	/*clean_up */
-	%if &local_debug_flag. = False %then %do;
-		proc datasets lib=work;
-			delete _temp_: ;
-		run;
-	%end;
+	%if &local_debug_flag. = False %then
+		%do;
 
+			proc datasets lib=work;
+				delete _temp_:;
+			run;
+
+		%end;
 %mend;
