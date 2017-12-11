@@ -44,7 +44,7 @@ HISTORY:
 		%do;
 
 			proc sql noprint;
-				select count(status) into: rare_event_count
+				select count(&target_variable.) into: rare_event_count
 					from &ds_in.
 						where &target_variable. = &rare_event_level.;
 			quit;
