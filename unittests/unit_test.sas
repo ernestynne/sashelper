@@ -281,3 +281,166 @@ require mprint and mlogic to confirm that the model hierarchy option hasnt been 
 	maintain_hierarchy = False,
 	local_debug_flag   = True);
 
+              
+
+/********************* get_data_partition **********************/
+
+
+data work._test_ (drop = temp);
+     set sashelp.citiday (keep=date);
+     id = _n_;
+     temp = ranuni(98765);
+
+     if temp <= 0.5 then
+           target = 0;
+     else target = 1;
+run;
+
+
+/* checkException: In get_data_partition - must specify proportions not percentages */
+%get_data_partition(
+     ds_in            = work._test_,
+     ds_out           = work._test_out_,
+     train_pro        = 70,
+     valid_pro        = 30,
+     test_pro         = 0,
+     set_seed         = 12345,
+     id_variable      = id,
+     oot_flag         = False,
+     oot_column       = ,
+     local_debug_flag = True);
+
+ 
+
+/* checkException: In get_data_partition - negative proportions specified */
+%get_data_partition(
+     ds_in            = work._test_,
+     ds_out           = work._test_out_,
+     train_pro        = 0.7,
+     valid_pro        = -0.5,
+     test_pro         = 0.0,
+     set_seed         = 12345,
+     id_variable      = id,
+     oot_flag         = False,
+     oot_column       = ,
+     local_debug_flag = True);
+ 
+
+/* checkException: In get_data_partition - proportions need to sum to 1 */
+%get_data_partition(
+     ds_in            = work._test_,
+     ds_out           = work._test_out_,
+     train_pro        = 0.7,
+     valid_pro        = 0.3,
+     test_pro         = 0.3,
+     set_seed         = 12345,
+     id_variable      = id,
+     oot_flag         = False,
+     oot_column       = ,
+     local_debug_flag = True);
+
+ 
+/* assert roughly 70:30 split between train and validate for both the primary and secondary target */
+
+%get_data_partition(
+     ds_in            = work._test_,
+     ds_out           = work._test_out_70_30,
+     train_pro        = 0.7,
+     valid_pro        = 0.3,
+     test_pro         = 0.0,
+     set_seed         = 12345,
+     id_variable      = id,
+     oot_flag         = False,
+     oot_column       = ,
+     local_debug_flag = True);
+ 
+
+proc sort data =  work._test_out_70_30;
+by target;
+run;
+
+proc freq data = work._test_out_70_30;
+     tables partition / missprint missing;
+     by target;
+run;
+
+ 
+/* assert roughly 50:40:10 split between train and validate for both the primary and secondary target */
+/* note that this is a small dataset so doing train, validate, test will mean that the actual percentages will be out by say 1 or so percent */
+
+%get_data_partition(
+     ds_in            = work._test_,
+     ds_out           = work._test_out_50_40_10,
+     train_pro        = 0.5,
+     valid_pro        = 0.4,
+     test_pro         = 0.1,
+     set_seed         = 12345,
+     id_variable      = id,
+     oot_flag         = True,
+     oot_column       = date,
+     local_debug_flag = True);
+
+
+proc sort data = work._test_out_50_40_10;
+by target;
+run;
+
+proc freq data = work._test_out_50_40_10;
+     tables partition / missprint missing;
+     by target;
+run;
+
+ 
+/* assert roughly 70:30 split between train and validate for both the primary and secondary target */
+/* first 70% of the data is allocated to train, remaining is allocated to validate */
+%get_data_partition(
+     ds_in            = work._test_,
+     ds_out           = work._test_out_oot_70_30,
+     train_pro        = 0.7,
+     valid_pro        = 0.3,
+     test_pro         = 0.0,
+     set_seed         = 12345,
+     id_variable      = id,
+     oot_flag         = True,
+     oot_column       = date,
+     local_debug_flag = True);
+ 
+
+proc sort data = work._test_out_oot_70_30;
+by target;
+run; 
+
+proc freq data = work._test_out_oot_70_30;
+     tables partition / missprint missing;
+     by target;
+run;
+ 
+
+/* assert roughly 50:40:10 split between train and validate for both the primary and secondary target */
+/* first 50% of the data is allocated to train, 40% is allocated to valid, 10% allocated to test, remaining is allocated to validate */
+/* note that this is a small dataset so doing train, validate, test will mean that the actual percentages will be out by say 1 or so percent */
+
+%get_data_partition(
+     ds_in            = work._test_,
+     ds_out           = work._test_out_oot_50_40_10,
+     train_pro        = 0.5,
+     valid_pro        = 0.4,
+     test_pro         = 0.1,
+     set_seed         = 12345,
+     id_variable      = id,
+     oot_flag         = False,
+     oot_column       = date,
+     local_debug_flag = True);
+
+ 
+
+proc sort data =  work._test_out_oot_50_40_10;
+by target;
+run;
+
+ 
+proc freq data=work._test_out_oot_50_40_10;
+     tables partition / missprint missing;
+     by target;
+run;
+
