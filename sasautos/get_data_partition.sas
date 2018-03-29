@@ -25,6 +25,8 @@ This is designed for binary targets
 Code might fail if you have a continuous target due to stratification on the target variable
 
 HISTORY:
+16 Mar 2018 EW revised code to sort on random number based on QA feedback
+15 Mar 2018 TN QA - code should be sorted by random number to get the right distribution between sets
 30 Jan 2018 EW made rounding more consistent
 12 Dec 2017 EW v1
 *********************************************************************************************************/
@@ -82,7 +84,7 @@ HISTORY:
 					a.&oot_column.,
 				%end;
 
-			a.&id_variable.;
+			calculated temp;
 	quit;
 
 	/* while I normally go for sql I want to avoid the undocumented monotonic function as per warnings on various blogs */
